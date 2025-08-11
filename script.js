@@ -1,27 +1,43 @@
-// script.js (ESM) — Firebase + Firestore integration for GitHub Pages
+// script.js (ESM) — Firebase + Firestore + Anonymous Auth
 
 // ---------- Firebase (CDN ESM) ----------
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js';
 import {
   getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs,
   onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, setDoc, getDoc
 } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js';
 
-// Your config (as requested)
+// ---- Firebase config ----
 const firebaseConfig = {
   apiKey: "AIzaSyCLdR40w6I4EtddnZqvakj1jc0GhgfvDgo",
-    authDomain: "qc-team-task.firebaseapp.com",
-    projectId: "qc-team-task",
-    storageBucket: "qc-team-task.firebasestorage.app",
-    messagingSenderId: "763034831391",
-    appId: "1:763034831391:web:9e084ad0bff8ccd839232a",
-    measurementId: "G-KF05HFQDGJ"
+  authDomain: "qc-team-task.firebaseapp.com",
+  projectId: "qc-team-task",
+  storageBucket: "qc-team-task.firebasestorage.app",
+  messagingSenderId: "763034831391",
+  appId: "1:763034831391:web:9e084ad0bff8ccd839232a",
+  measurementId: "G-KF05HFQDGJ"
 };
 
+// ---- Init ----
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+const db  = getFirestore(app);
 
-// Helpers for server time (for housekeeping marker etc.)
+// ---- Auth (Anonymous) ----
+const auth = getAuth(app);
+function ensureAnonAuth() {
+  return new Promise((resolve, reject) => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) { unsub(); resolve(user); }
+    }, reject);
+    signInAnonymously(auth).catch((err) => {
+      console.warn('Anonymous sign-in failed:', err);
+      // keep listening via onAuthStateChanged
+    });
+  });
+}
+
+// ---- Helpers ----
 async function getServerNow() {
   try {
     const ref = doc(db, '_meta', 'server-time');
@@ -33,8 +49,9 @@ async function getServerNow() {
     return new Date();
   }
 }
+const genId = () => (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
 
-// ---------- App code (based on your original structure) ----------
+// ---------- App code ----------
 document.addEventListener('DOMContentLoaded', () => {
   // --- STATE ---
   let tasks = [];
@@ -57,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-  // --- DOM CACHE (unchanged) ---
+  // --- DOM CACHE ---
   const mainContent = document.getElementById('app-main-content');
   const navLinks = document.querySelectorAll('.nav-link');
   const views = document.querySelectorAll('.view');
@@ -110,7 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const confirmModalConfirmBtn = document.getElementById('confirm-modal-confirm-btn');
   const confirmModalCancelBtn = document.getElementById('confirm-modal-cancel-btn');
 
-  // --- Utils (same as your file) ---
+  // --- Utils ---
   const formatDate = (date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2,'0');
@@ -127,7 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const getPriority = () => document.querySelector('input[name="priority"]:checked').value;
   const setPriority = (p) => { const r = document.querySelector(`input[name="priority"][value="${p}"]`); if (r) r.checked = true; };
 
-  // ---- Storage: Firestore (primary) + localStorage (fallback for dev) ----
+  // ---- Storage: Firestore (primary) + localStorage (fallback) ----
   const LS_KEY = 'qa_tasks';
 
   // Local fallback
@@ -173,7 +190,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   async function deleteTaskFS(id) { await deleteDoc(doc(db, 'tasks', id)); }
 
-  // --- Core logic from your file, adapted to Firestore ---
+  // --- Core logic ---
   const runDailyRollover = async () => {
     const today = new Date(); today.setHours(0,0,0,0);
     let changed = 0;
@@ -220,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (deleted) showToast(`${deleted} old 'Done' tasks cleared.`, 'success');
   };
 
-  // --- Rendering (unchanged from your file) ---
+  // --- Rendering ---
   const renderCurrentView = () => {
     const activeLink = document.querySelector('.nav-link.active');
     if (!activeLink) return;
@@ -364,7 +381,13 @@ document.addEventListener('DOMContentLoaded', () => {
       taskImportantCheckbox.checked = !!t.important; taskStatusSelect.value = t.status;
       taskDepartmentSelect.value = t.department || ''; taskAssigneeInput.value = t.assignee || '';
       taskNotesInput.value = t.notes || '';
-      if (t.reminderAt){ reminderFields.style.display = 'flex'; taskReminderToggle.checked = true; const rd = new Date(t.reminderAt); taskReminderDate.value = formatDate(rd); taskReminderTime.value = formatTime(rd); }
+      if (t.reminderAt){
+        reminderFields.style.display = 'flex';
+        taskReminderToggle.checked = true;
+        const rd = new Date(t.reminderAt);
+        taskReminderDate.value = formatDate(rd);
+        taskReminderTime.value = formatTime(rd);
+      }
       (t.subtasks || []).forEach(st => addSubtaskToDOM(st.id, st.text, st.done));
       updateSubtaskProgress(t.id);
       setupEditHeaderActions(t.id);
@@ -385,7 +408,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const addSubtaskToDOM = (id, text='', done=false) => {
-    const subId = id || `subtask_${uuid.v4()}`;
+    const subId = id || `subtask_${genId()}`;
     const li = document.createElement('li');
     li.className = 'subtask-item'; li.dataset.subtaskId = subId;
     li.innerHTML = `<input type="checkbox" ${done?'checked':''}><input type="text" class="form-control" placeholder="Describe a subtask…" value="${text}"><button type="button" class="remove-subtask-btn">🗑️</button>`;
@@ -436,13 +459,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       closeModal();
     }catch(e){
-      // fallback local for dev
       console.warn('Firestore write failed, saving locally:', e);
       if (currentEditingTaskId){
         const i = tasks.findIndex(t=>t.id===currentEditingTaskId);
         if (i>-1) tasks[i] = { ...tasks[i], ...data, status: taskStatusSelect.value, updatedAt: new Date().toISOString() };
       }else{
-        tasks.push({ ...data, id: uuid.v4(), status:'in_progress', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        tasks.push({ ...data, id: genId(), status:'in_progress', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       }
       lsSave(); closeModal(); renderCurrentView();
     }
@@ -504,7 +526,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return ok;
   };
 
-  // --- Events (unchanged) ---
+  // --- Events ---
   navLinks.forEach(link => link.addEventListener('click', e => {
     e.preventDefault();
     navLinks.forEach(l=>l.classList.remove('active')); views.forEach(v=>v.classList.remove('active'));
@@ -567,20 +589,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Init ---
   const init = async () => {
-    // start realtime listener
+    // 0) make sure we are signed in (anonymous)
+    await ensureAnonAuth();
+
+    // 1) start realtime listener
     const unsub = startTasksListener();
-    // wait 1st snapshot or failure, then run housekeeping
+
+    // 2) wait first snapshot (or failure), then housekeeping
     await firstSnap;
     await runDailyRollover();
     await runWeeklyCleanup();
 
-    // fallback local if Firestore blocked: load + render
+    // 3) initial render
     if (!firestoreReady) { lsLoad(); renderCalendar(); }
     else { renderCalendar(); }
 
-    // clean up on unload (listener)
+    // 4) cleanup
     window.addEventListener('beforeunload', ()=> unsub && unsub());
   };
 
+  // start app
   init();
 });
